@@ -70,6 +70,10 @@ class HistoryWindowController: NSWindowController {
     override func close() {
         lastClosedAt = Date()
         window?.saveFrame(usingName: Self.windowAutosaveName)
+        if let window = window {
+            // Discard marked search text before closing so it doesn't change the search on reopen
+            NotificationCenter.default.post(name: .bufferWindowWillClose, object: window)
+        }
         super.close()
     }
     
@@ -217,6 +221,7 @@ extension Notification.Name {
     static let bufferIgnoreNextChange = Notification.Name("bufferIgnoreNextChange")
     static let bufferHotkeyChanged = Notification.Name("bufferHotkeyChanged")
     static let bufferWindowDidOpen = Notification.Name("bufferWindowDidOpen")
+    static let bufferWindowWillClose = Notification.Name("bufferWindowWillClose")
     static let bufferHistoryLimitChanged = Notification.Name("bufferHistoryLimitChanged")
     static let bufferStatusBarVisibilityChanged = Notification.Name("bufferStatusBarVisibilityChanged")
     static let bufferUpdateAvailable = Notification.Name("bufferUpdateAvailable")
@@ -764,6 +769,10 @@ struct HistoryContentView: View {
             if isEditing {
                 exitEditMode(save: false)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .bufferWindowWillClose)) { notification in
+            guard let window = notification.object as? NSWindow, window === NSApp.keyWindow else { return }
+            discardSearchComposition()
         }
         .onReceive(NotificationCenter.default.publisher(for: .bufferWindowDidOpen)) { _ in
             // Only reset persistent search state if the window was closed long enough ago
