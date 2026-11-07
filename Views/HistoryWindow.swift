@@ -690,6 +690,7 @@ struct HistoryContentView: View {
         }
         .onChange(of: showTagInput) { newValue in
             if newValue {
+                discardSearchComposition()
                 isSearchFocused = false
                 isTextEditorFocused = false
                 // Defer by one run loop so the TextField is in the hierarchy before focusing
@@ -1707,8 +1708,23 @@ struct HistoryContentView: View {
         }
     }
     
+    // Discard marked search text before moving focus to keep the selected item stable
+    private func discardSearchComposition() {
+        guard isSearchFocused,
+              let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+              textView.hasMarkedText() else { return }
+
+        let markedRange = textView.markedRange()
+        guard markedRange.location != NSNotFound else { return }
+
+        let inputContext = textView.inputContext
+        textView.insertText("", replacementRange: markedRange)
+        inputContext?.discardMarkedText()
+    }
+
     private func enterEditMode() {
         guard let item = selectedItem, item.isEditable else { return }
+        discardSearchComposition()
         editingItemID = item.id
         editText = item.textContent ?? ""
         isEditing = true
@@ -1724,12 +1740,20 @@ struct HistoryContentView: View {
         if save,
            let itemID = editingItemID,
            let item = store.items.first(where: { $0.id == itemID }) {
-            store.updateText(editText, for: item)
+            var textToSave = editText
+            // Commit marked text and read the result directly from the editor before saving
+            if isTextEditorFocused,
+               let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+               textView.hasMarkedText() {
+                textView.unmarkText()
+                textToSave = textView.string
+            }
+            store.updateText(textToSave, for: item)
             
             NotificationCenter.default.post(name: .bufferIgnoreNextChange, object: nil)
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
-            pasteboard.setString(editText, forType: .string)
+            pasteboard.setString(textToSave, forType: .string)
         }
         editingItemID = nil
         editText = ""
@@ -2382,8 +2406,9 @@ struct GlobalKeyMonitor: NSViewRepresentable {
                     return event
                 }
 
-                // Let the IME handle events while text composition is active
-                if let textView = self.view?.window?.firstResponder as? NSTextView,
+                // Let the IME handle events without Command while text composition is active
+                if !event.modifierFlags.contains(.command),
+                   let textView = self.view?.window?.firstResponder as? NSTextView,
                    textView.hasMarkedText() {
                     return event
                 }
